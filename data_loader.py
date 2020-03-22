@@ -48,7 +48,7 @@ def get_train_loader(data_dir,
     # load dataset
     dataset = datasets.CIFAR100(root=data_dir,
                                 transform=trans,
-                                download=False,
+                                download=True,
                                 train=True)
     if shuffle:
         np.random.seed(random_seed)
@@ -91,7 +91,7 @@ def get_test_loader(data_dir,
 
     # load dataset
     dataset = datasets.CIFAR100(
-        data_dir, train=False, download=False, transform=trans
+        data_dir, train=False, download=True, transform=trans
     )
 
     data_loader = torch.utils.data.DataLoader(
