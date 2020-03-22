@@ -120,8 +120,9 @@ class Trainer(object):
         a separate ckpt is created for use on the test set.
         """
         # load the most recent checkpoint
+        model_num = 1
         if self.resume:
-            self.load_checkpoint(best=False)
+            self.load_checkpoint(model_num, best=False)
 
         print("\n[*] Train on {} samples, validate on {} samples".format(
             self.num_train, self.num_valid)
@@ -294,17 +295,19 @@ class Trainer(object):
         top5 = AverageMeter()
         
         # load the best checkpoint
-        self.load_checkpoint(best=self.best)
-        self.model.eval()
+        model_num = 1
+        self.load_checkpoint(model_num, best=self.best)
+        self.models[model_num].eval()
         for i, (images, labels) in enumerate(self.test_loader):
             if self.use_gpu:
                 images, labels = images.cuda(), labels.cuda()
             images, labels = Variable(images), Variable(labels)
         
             #forward pass
-            outputs = self.model(images)
-            loss = self.loss_fn(outputs, labels)
-
+            outputs = self.models[model_num](images)
+            ce_loss = self.loss_ce(outputs, labels)
+            kl_loss = 0
+            loss = ce_loss 
             # measure accuracy and record loss
             prec1, prec5 = accuracy(outputs.data, labels.data, topk=(1, 5))
             losses.update(loss.item(), images.size()[0])
@@ -337,7 +340,7 @@ class Trainer(object):
                 ckpt_path, os.path.join(self.ckpt_dir, filename)
             )
 
-    '''def load_checkpoint(self, best=False):
+    def load_checkpoint(self, i, best=False):
         """
         Load the best copy of a model. This is useful for 2 cases:
 
@@ -350,19 +353,21 @@ class Trainer(object):
           to evaluate your model on the test data. Else, set to False in
           which case the most recent version of the checkpoint is used.
         """
+
         print("[*] Loading model from {}".format(self.ckpt_dir))
 
-        filename = self.model_name + '_ckpt.pth.tar'
+        filename = self.model_name + str(i+1) + '_ckpt.pth.tar'
         if best:
-            filename = self.model_name + '_model_best.pth.tar'
+            filename = self.model_name + str(i+1) + '_model_best.pth.tar'
         ckpt_path = os.path.join(self.ckpt_dir, filename)
         ckpt = torch.load(ckpt_path)
 
         # load variables from checkpoint
         self.start_epoch = ckpt['epoch']
         self.best_valid_acc = ckpt['best_valid_acc']
-        self.model.load_state_dict(ckpt['model_state'])
-        self.optimizer.load_state_dict(ckpt['optim_state'])
+
+        self.models[i].load_state_dict(ckpt['model_state'])
+        self.optimizers[i].load_state_dict(ckpt['optim_state'])
 
         if best:
             print(
@@ -374,4 +379,4 @@ class Trainer(object):
             print(
                 "[*] Loaded {} checkpoint @ epoch {}".format(
                     filename, ckpt['epoch'])
-            )'''
+            )
