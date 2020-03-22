@@ -79,6 +79,8 @@ misc_arg.add_argument('--save_name', type=str, default='model',
                       help='Name of the model to save as')
 misc_arg.add_argument('--model_num', type=int, default=2,
                       help='Number of models to train for DML')
+misc_arg.add_argument('--model_name', type=str, default='resnet32',
+                      help='Name of the model to use')
 
 def get_config():
     config, unparsed = parser.parse_known_args()

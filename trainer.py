@@ -22,6 +22,8 @@ from utils import accuracy, AverageMeter
 from resnet import resnet32
 from tensorboard_logger import configure, log_value
 
+import mobilenet 
+
 class Trainer(object):
     """
     Trainer encapsulates all the logic necessary for
@@ -71,9 +73,10 @@ class Trainer(object):
         self.use_tensorboard = config.use_tensorboard
         self.resume = config.resume
         self.print_freq = config.print_freq
-        self.model_name = config.save_name
+        self.save_name = config.save_name
         
         self.model_num = config.model_num
+        self.model_name = config.model_name
         self.models = []
         self.optimizers = []
         self.schedulers = []
@@ -84,7 +87,7 @@ class Trainer(object):
 
         # configure tensorboard logging
         if self.use_tensorboard:
-            tensorboard_dir = self.logs_dir + self.model_name
+            tensorboard_dir = self.logs_dir + self.save_name
             print('[*] Saving tensorboard logs to {}'.format(tensorboard_dir))
             if not os.path.exists(tensorboard_dir):
                 os.makedirs(tensorboard_dir)
@@ -92,7 +95,11 @@ class Trainer(object):
 
         for i in range(self.model_num):
             # build models
-            model = resnet32()
+            if self.model_name == 'resnet32':
+                model = resnet32()
+            elif self.model_name == 'mobilenet':
+                model = mobilenet.Net()
+
             if self.use_gpu:
                 model.cuda()
             
@@ -191,6 +198,7 @@ class Trainer(object):
         tic = time.time()
         with tqdm(total=self.num_train) as pbar:
             for i, (images, labels) in enumerate(self.train_loader):
+                # image shape: torch.Size([256, 3, 32, 32])
                 if self.use_gpu:
                     images, labels = images.cuda(), labels.cuda()
                 images, labels = Variable(images), Variable(labels)
@@ -330,12 +338,12 @@ class Trainer(object):
         """
         # print("[*] Saving model to {}".format(self.ckpt_dir))
 
-        filename = self.model_name + str(i+1) + '_ckpt.pth.tar'
+        filename = self.save_name + str(i+1) + '_ckpt.pth.tar'
         ckpt_path = os.path.join(self.ckpt_dir, filename)
         torch.save(state, ckpt_path)
 
         if is_best:
-            filename = self.model_name + str(i+1) + '_model_best.pth.tar'
+            filename = self.save_name + str(i+1) + '_model_best.pth.tar'
             shutil.copyfile(
                 ckpt_path, os.path.join(self.ckpt_dir, filename)
             )
@@ -356,9 +364,9 @@ class Trainer(object):
 
         print("[*] Loading model from {}".format(self.ckpt_dir))
 
-        filename = self.model_name + str(i+1) + '_ckpt.pth.tar'
+        filename = self.save_name + str(i+1) + '_ckpt.pth.tar'
         if best:
-            filename = self.model_name + str(i+1) + '_model_best.pth.tar'
+            filename = self.save_name + str(i+1) + '_model_best.pth.tar'
         ckpt_path = os.path.join(self.ckpt_dir, filename)
         ckpt = torch.load(ckpt_path)
 
