@@ -24,6 +24,9 @@ from tensorboard_logger import configure, log_value
 
 import mobilenet 
 
+from grad_cam import GradCAM
+
+
 class Trainer(object):
     """
     Trainer encapsulates all the logic necessary for
@@ -85,6 +88,11 @@ class Trainer(object):
         self.loss_ce = nn.CrossEntropyLoss()
         self.best_valid_accs = [0.] * self.model_num
 
+        #Added:
+        self.grad_cams= []
+        self.device = None
+        self.device_name = None
+
         # configure tensorboard logging
         if self.use_tensorboard:
             tensorboard_dir = self.logs_dir + self.save_name
@@ -117,7 +125,21 @@ class Trainer(object):
 
         print('[*] Number of parameters of one model: {:,}'.format(
             sum([p.data.nelement() for p in self.models[0].parameters()])))
-    
+
+    #ADDED:
+    def get_device(self):
+        cuda = torch.cuda.is_available()
+        device = torch.device("cuda" if cuda else "cpu")
+        if cuda:
+            current_device = torch.cuda.current_device()
+            device_name = torch.cuda.get_device_name(current_device)
+        else:
+            device_name = "CPU"
+        print("Device: {}".format(device_name))
+        return device, device_name
+
+
+
     def train(self):
         """
         Train the model on the training set.
@@ -127,13 +149,20 @@ class Trainer(object):
         a separate ckpt is created for use on the test set.
         """
         # load the most recent checkpoint
-        model_num = 1
+        model_num = 0
         if self.resume:
             self.load_checkpoint(model_num, best=False)
 
         print("\n[*] Train on {} samples, validate on {} samples".format(
             self.num_train, self.num_valid)
         )
+
+        #Added:
+        self.device, self.device_name = self.get_device()
+        for model in self.models:
+            self.grad_cams.append(GradCAM(model=model))
+        
+
 
         for epoch in range(self.start_epoch, self.epochs):
 
@@ -205,17 +234,39 @@ class Trainer(object):
                 
                 #forward pass
                 outputs=[]
-                for model in self.models:
-                    outputs.append(model(images))
+                #ADDED:
+                gradcams=[]
+                
+                for i in range(self.model_num):
+                    outputs.append(self.models[i](images))
+
+                    #ADDED:
+                    gcam = self.grad_cams[i]                                        
+                    probs, ids = gcam.forward(images) # forward pass does net.zero_grad()
+                    ids_ = torch.LongTensor([labels.tolist()]).T.to(self.device)
+                    gcam.backward(ids_)
+                    gradcams.append(gcam.generate(target_layer='layer3.4.conv1'))
+
                 for i in range(self.model_num):
                     ce_loss = self.loss_ce(outputs[i], labels)
                     kl_loss = 0
+                    #ADDED:
+                    l2_gradcams_loss = 0
+
                     for j in range(self.model_num):
                         if i!=j:
                             kl_loss += self.loss_kl(F.log_softmax(outputs[i], dim = 1), 
                                                     F.softmax(Variable(outputs[j]), dim=1))
-                    loss = ce_loss + kl_loss / (self.model_num - 1)
-                    
+                            #ADDED:                        
+                            l2_gradcams_loss += self.l2_gradcams(gradcams[i], gradcams[j])
+
+                    # loss = ce_loss + kl_loss / (self.model_num - 1)
+                    #ADDED:
+                    loss = l2_gradcams_loss * 0.1 + (ce_loss + kl_loss / (self.model_num - 1)) * 0.9
+                    # print("==========================")
+                    # print(l2_gradcams_loss)
+                    # print(loss)
+                    # print("=========================")
                     # measure accuracy and record loss
                     prec = accuracy(outputs[i].data, labels.data, topk=(1,))[0]
                     losses[i].update(loss.item(), images.size()[0])
@@ -224,7 +275,11 @@ class Trainer(object):
 
                     # compute gradients and update SGD
                     self.optimizers[i].zero_grad()
-                    loss.backward()
+                    # loss.backward()
+
+                    #ADDED:
+                    loss.backward(retain_graph=True)
+
                     self.optimizers[i].step()
 
                 # measure elapsed time
@@ -250,6 +305,15 @@ class Trainer(object):
             
             return losses, accs
 
+    #ADDED:
+    def l2_gradcams(self, gcam1, gcam2): #gcam (B, C, H, W)
+        return torch.norm(gcam1-gcam2)
+
+
+
+
+
+
     def validate(self, epoch):
         """
         Evaluate the model on the validation set.
@@ -268,16 +332,41 @@ class Trainer(object):
 
             #forward pass
             outputs=[]
-            for model in self.models:
-                outputs.append(model(images))
+            #ADDED:
+            gradcams=[]
+                
+            for i in range(self.model_num):
+                outputs.append(self.models[i](images))
+
+                #ADDED:
+                gcam = self.grad_cams[i]                                        
+                probs, ids = gcam.forward(images) # forward pass does net.zero_grad()
+                ids_ = torch.LongTensor([labels.tolist()]).T.to(self.device)
+                gcam.backward(ids_)
+                gradcams.append(gcam.generate(target_layer='layer3.4.conv1'))
+
+
+
             for i in range(self.model_num):
                 ce_loss = self.loss_ce(outputs[i], labels)
                 kl_loss = 0
+                #ADDED:
+                l2_gradcams_loss = 0
+
                 for j in range(self.model_num):
                     if i!=j:
                         kl_loss += self.loss_kl(F.log_softmax(outputs[i], dim = 1),
                                                 F.softmax(Variable(outputs[j]), dim=1))
-                loss = ce_loss + kl_loss / (self.model_num - 1)
+                        #ADDED:                        
+                        l2_gradcams_loss += self.l2_gradcams(gradcams[i], gradcams[j])
+
+                    # loss = ce_loss + kl_loss / (self.model_num - 1)
+                    #ADDED:
+                    loss = l2_gradcams_loss * 0.1 + (ce_loss + kl_loss / (self.model_num - 1)) * 0.9
+                    # print("==========================")
+                    # print(l2_gradcams_loss)
+                    # print(loss)
+                    # print("=========================")    
 
                 # measure accuracy and record loss
                 prec = accuracy(outputs[i].data, labels.data, topk=(1,))[0]
@@ -303,7 +392,7 @@ class Trainer(object):
         top5 = AverageMeter()
         
         # load the best checkpoint
-        model_num = 1
+        model_num = 0
         self.load_checkpoint(model_num, best=self.best)
         self.models[model_num].eval()
         for i, (images, labels) in enumerate(self.test_loader):
